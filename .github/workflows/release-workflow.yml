@@ -65,11 +65,11 @@ jobs:
       with:
         fetch-depth: 0
 
-    # Install the .NET Framework 4.6.1 workload
-    - name: Install .NET Framework 4.6.1
+    # Install the .NET Framework 4.8.1 workload
+    - name: Install .NET Framework 4.8.1
       uses: actions/setup-dotnet@v4
       with:
-        dotnet-version: 4.6.1
+        dotnet-version: 4.8.1
 
     # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
     - name: Setup MSBuild.exe
