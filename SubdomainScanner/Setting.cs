@@ -22,7 +22,7 @@ namespace SubdomainScanner
             txtPortTimeout.Text = GlobalConfig.PortTimeout.ToString();
             txtServerTimeout.Text = GlobalConfig.ServerTimeout.ToString();
             txtFullspeedThreads.Text = GlobalConfig.FullspeedThreads.ToString();
-            labelFullspeedThreads.Text = string.Format("建议:CPU核心数*5;建议值：{0}", Environment.ProcessorCount * 5);
+            labelFullspeedThreads.Text = string.Format("建议:CPU核心数*50;建议值：{0}", Environment.ProcessorCount * 50);
         }
 
         private void btnSelect_Click(object sender, EventArgs e)
