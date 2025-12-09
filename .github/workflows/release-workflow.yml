@@ -3,13 +3,17 @@ name: Build and Release SubdomainScanner
 on:
   push:
     tags:
-      - 'v*'  # 当推送以 v 开头的标签时触发（如 v1.0.0）
+      - 'v*'
   workflow_dispatch:
     inputs:
       build_configuration:
         description: 'Build configuration'
         required: false
         default: 'Release'
+      tag_name:
+        description: 'Optional tag name to use for creating the Release (for manual runs)'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -19,15 +23,14 @@ jobs:
 
     runs-on: windows-latest
 
-    # 把 secrets 映射到 env，避免在 if 中直接引用 secrets
     env:
+      # 基本环境 / 请根据实际仓库调整这两个路径（或把它们改为仓库变量）
       Solution_Name: SubdomainScanner.sln
+      WAP_PROJECT_DIRECTORY: ${{ vars.Wap_Project_Directory || 'SubdomainScanner\\AppPackages' }}
+      WAP_PROJECT_PATH: ${{ vars.Wap_Project_Path || 'SubdomainScanner\\SubdomainScanner.csproj' }}
       BASE64_ENCODED_PFX: ${{ secrets.Base64_Encoded_Pfx }}
-      # 请在仓库 Settings -> Variables 添加以下变量（或直接在此处填写路径）
-      WAP_PROJECT_DIRECTORY: ${{ vars.Wap_Project_Directory }}
-      WAP_PROJECT_PATH: ${{ vars.Wap_Project_Path }}
-      # 计算构建配置（优先使用手动输入，否则使用 matrix）
       BUILD_CONFIGURATION: ${{ github.event.inputs.build_configuration || matrix.configuration }}
+      INPUT_TAG_NAME: ${{ github.event.inputs.tag_name || '' }}
 
     steps:
     - name: Checkout
@@ -48,16 +51,19 @@ jobs:
     - name: Restore the application
       run: msbuild $Env:Solution_Name /t:Restore /p:Configuration=$Env:BUILD_CONFIGURATION
 
-    - name: Decode the pfx
+    - name: Build the solution
+      run: msbuild $Env:Solution_Name /p:Configuration=$Env:BUILD_CONFIGURATION
+
+    - name: Decode the pfx (if provided)
       if: ${{ env.BASE64_ENCODED_PFX != '' }}
       run: |
         $pfx_cert_byte = [System.Convert]::FromBase64String("$Env:BASE64_ENCODED_PFX")
-        # 如果你把 WAP_PROJECT_DIRECTORY 设为了相对路径或绝对路径，请确认该路径有效
-        $certificatePath = Join-Path -Path $Env:WAP_PROJECT_DIRECTORY -ChildPath GitHubActionsWorkflow.pfx
+        $certificatePath = Join-Path -Path $Env:WAP_PROJECT_DIRECTORY -ChildPath 'GitHubActionsWorkflow.pfx'
         [IO.File]::WriteAllBytes("$certificatePath", $pfx_cert_byte)
 
     - name: Create the app package
       run: |
+        # 这里调用你的 msbuild 打包命令，示例保留原有调用方式（请确认 WAP_PROJECT_PATH 有效）
         msbuild $Env:WAP_PROJECT_PATH /p:Configuration=$Env:BUILD_CONFIGURATION /p:UapAppxPackageBuildMode=$Env:Appx_Package_Build_Mode /p:AppxBundle=$Env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx
       env:
         Appx_Bundle: Always
@@ -65,13 +71,62 @@ jobs:
         Appx_Package_Build_Mode: StoreUpload
         Configuration: ${{ env.BUILD_CONFIGURATION }}
 
-    - name: Remove the pfx
+    - name: Remove the pfx (cleanup)
       if: ${{ env.BASE64_ENCODED_PFX != '' }}
       run: Remove-Item -Path (Join-Path $Env:WAP_PROJECT_DIRECTORY 'GitHubActionsWorkflow.pfx')
 
-    - name: Upload build artifacts
+    - name: Upload build artifacts (artifact store)
       uses: actions/upload-artifact@v4
       with:
         name: MSIX Package
-        # 使用表达式引用 env 的值，确保大括号在路径之前结束
-        path: ${{ env.WAP_PROJECT_DIRECTORY }}/AppPackages
+        path: ${{ env.WAP_PROJECT_DIRECTORY }}\AppPackages
+
+    # Prepare release: determine tag name to use
+    - name: Determine tag to use for Release
+      id: get_tag
+      run: |
+        if ($Env:GITHUB_REF -like 'refs/tags/*') {
+          $t = $Env:GITHUB_REF -replace '^refs/tags/',''
+        } elseif ($Env:INPUT_TAG_NAME -ne '') {
+          $t = $Env:INPUT_TAG_NAME
+        } else {
+          $t = "manual-$($Env:GITHUB_RUN_ID)"
+        }
+        Write-Host "Determined tag: $t"
+        echo "tag_name=$t" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+
+    # Zip the AppPackages directory so we can upload as a single asset
+    - name: Zip AppPackages
+      id: zip
+      run: |
+        $src = Join-Path $Env:WAP_PROJECT_DIRECTORY 'AppPackages\*'
+        $zip = Join-Path $Env:RUNNER_TEMP 'AppPackages.zip'
+        if (Test-Path $Env:WAP_PROJECT_DIRECTORY) {
+          Compress-Archive -Path $src -DestinationPath $zip -Force
+          echo "zip_path=$zip" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+          Write-Host "Zipped AppPackages -> $zip"
+        } else {
+          Write-Host "Warning: WAP_PROJECT_DIRECTORY not found: $Env:WAP_PROJECT_DIRECTORY"
+          echo "zip_path=" | Out-File -FilePath $Env:GITHUB_OUTPUT -Encoding utf8 -Append
+        }
+
+    - name: Create GitHub Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.get_tag.outputs.tag_name }}
+        release_name: ${{ steps.get_tag.outputs.tag_name }}
+        body: "Automated release created by workflow"
+        draft: false
+        prerelease: false
+
+    - name: Upload release asset (zip)
+      if: ${{ steps.zip.outputs.zip_path != '' }}
+      uses: actions/upload-release-asset@v1
+      with:
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
+        asset_path: ${{ steps.zip.outputs.zip_path }}
+        asset_name: AppPackages.zip
+        asset_content_type: application/zip
