@@ -42,22 +42,23 @@ on:
   push:
     tags:
       - 'v*'  # 当推送以 v 开头的标签时触发（如 v1.0.0）
-    branches:
-      - main        # 临时允许 push 到 main（用于测试），确认后可删除
-  workflow_dispatch:  # 添加手动触发，方便调试
+  workflow_dispatch:
+    inputs:
+      build_configuration:
+        description: 'Build configuration'
+        required: false
+        default: 'Release'
+
 jobs:
-
   build:
-
     strategy:
       matrix:
         configuration: [Release]
 
-    runs-on: windows-latest  # For a list of available runner types, refer to
-                             # https://help.github.com/en/actions/reference/workflow-syntax-for-github-actions#jobsjob_idruns-on
+    runs-on: windows-latest
 
     env:
-      Solution_Name: SubdomainScanner.sln                         # Replace with your solution name, i.e. MyWpfApp.sln.
+      Solution_Name: SubdomainScanner.sln
 
     steps:
     - name: Checkout
@@ -65,44 +66,42 @@ jobs:
       with:
         fetch-depth: 0
 
-    # Install the .NET Framework 4.8.1 workload
-    - name: Install .NET Framework 4.8.1
-      uses: actions/setup-dotnet@v4
-      with:
-        dotnet-version: 4.8.1
-
-    # Add  MSBuild to the PATH: https://github.com/microsoft/setup-msbuild
+    # 不要用 actions/setup-dotnet 去安装 "4.6.1" —— 那会把 4.6.1 当作 dotnet SDK 去下载，导致 404。
+    # 对于传统 .NET Framework（WPF/WinForms）项目，使用 setup-msbuild + windows-latest 自带的 Visual Studio 即可。
     - name: Setup MSBuild.exe
       uses: microsoft/setup-msbuild@v2
 
+    - name: Show dotnet and msbuild info (for debugging)
+      run: |
+        echo "===== dotnet --info ====="
+        dotnet --info || echo "dotnet not present or SDK not applicable"
+        echo "===== msbuild -version ====="
+        msbuild -version
 
-    # Restore the application to populate the obj folder with RuntimeIdentifiers
     - name: Restore the application
       run: msbuild $env:Solution_Name /t:Restore /p:Configuration=$env:Configuration
       env:
         Configuration: ${{ matrix.configuration }}
 
-    # Decode the base 64 encoded pfx and save the Signing_Certificate
     - name: Decode the pfx
+      if: ${{ secrets.Base64_Encoded_Pfx != '' }}
       run: |
         $pfx_cert_byte = [System.Convert]::FromBase64String("${{ secrets.Base64_Encoded_Pfx }}")
         $certificatePath = Join-Path -Path $env:Wap_Project_Directory -ChildPath GitHubActionsWorkflow.pfx
         [IO.File]::WriteAllBytes("$certificatePath", $pfx_cert_byte)
 
-    # Create the app package by building and packaging the Windows Application Packaging project
     - name: Create the app package
-      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx /p:PackageCertificatePassword=${{ secrets.Pfx_Key }}
+      run: msbuild $env:Wap_Project_Path /p:Configuration=$env:Configuration /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx
       env:
         Appx_Bundle: Always
         Appx_Bundle_Platforms: x86|x64
         Appx_Package_Build_Mode: StoreUpload
         Configuration: ${{ matrix.configuration }}
 
-    # Remove the pfx
     - name: Remove the pfx
+      if: ${{ secrets.Base64_Encoded_Pfx != '' }}
       run: Remove-Item -path $env:Wap_Project_Directory\GitHubActionsWorkflow.pfx
 
-    # Upload the MSIX package: https://github.com/marketplace/actions/upload-a-build-artifact
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
