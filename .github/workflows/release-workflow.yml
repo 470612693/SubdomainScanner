@@ -42,7 +42,9 @@ on:
   push:
     tags:
       - 'v*'  # 当推送以 v 开头的标签时触发（如 v1.0.0）
-
+    branches:
+      - main        # 临时允许 push 到 main（用于测试），确认后可删除
+  workflow_dispatch:  # 添加手动触发，方便调试
 jobs:
 
   build:
