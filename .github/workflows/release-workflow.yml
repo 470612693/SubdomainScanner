@@ -19,8 +19,15 @@ jobs:
 
     runs-on: windows-latest
 
+    # 把 secrets 映射到 env，避免在 if 中直接引用 secrets
     env:
       Solution_Name: SubdomainScanner.sln
+      BASE64_ENCODED_PFX: ${{ secrets.Base64_Encoded_Pfx }}
+      # 请在仓库 Settings -> Variables 添加以下变量（或直接在此处填写路径）
+      WAP_PROJECT_DIRECTORY: ${{ vars.Wap_Project_Directory }}
+      WAP_PROJECT_PATH: ${{ vars.Wap_Project_Path }}
+      # 计算构建配置（优先使用手动输入，否则使用 matrix）
+      BUILD_CONFIGURATION: ${{ github.event.inputs.build_configuration || matrix.configuration }}
 
     steps:
     - name: Checkout
@@ -28,7 +35,6 @@ jobs:
       with:
         fetch-depth: 0
 
-    # 不要用 actions/setup-dotnet 去安装 .NET Framework（会导致 404）。
     - name: Setup MSBuild.exe
       uses: microsoft/setup-msbuild@v2
 
@@ -40,31 +46,32 @@ jobs:
         msbuild -version
 
     - name: Restore the application
-      run: msbuild $env:Solution_Name /t:Restore /p:Configuration=${{ github.event.inputs.build_configuration || matrix.configuration }}
-      env:
-        Configuration: ${{ matrix.configuration }}
+      run: msbuild $Env:Solution_Name /t:Restore /p:Configuration=$Env:BUILD_CONFIGURATION
 
     - name: Decode the pfx
-      if: ${{ secrets.Base64_Encoded_Pfx != '' }}
+      if: ${{ env.BASE64_ENCODED_PFX != '' }}
       run: |
-        $pfx_cert_byte = [System.Convert]::FromBase64String("${{ secrets.Base64_Encoded_Pfx }}")
-        $certificatePath = Join-Path -Path $env:Wap_Project_Directory -ChildPath GitHubActionsWorkflow.pfx
+        $pfx_cert_byte = [System.Convert]::FromBase64String("$Env:BASE64_ENCODED_PFX")
+        # 如果你把 WAP_PROJECT_DIRECTORY 设为了相对路径或绝对路径，请确认该路径有效
+        $certificatePath = Join-Path -Path $Env:WAP_PROJECT_DIRECTORY -ChildPath GitHubActionsWorkflow.pfx
         [IO.File]::WriteAllBytes("$certificatePath", $pfx_cert_byte)
 
     - name: Create the app package
-      run: msbuild $env:Wap_Project_Path /p:Configuration=${{ github.event.inputs.build_configuration || matrix.configuration }} /p:UapAppxPackageBuildMode=$env:Appx_Package_Build_Mode /p:AppxBundle=$env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx
+      run: |
+        msbuild $Env:WAP_PROJECT_PATH /p:Configuration=$Env:BUILD_CONFIGURATION /p:UapAppxPackageBuildMode=$Env:Appx_Package_Build_Mode /p:AppxBundle=$Env:Appx_Bundle /p:PackageCertificateKeyFile=GitHubActionsWorkflow.pfx
       env:
         Appx_Bundle: Always
         Appx_Bundle_Platforms: x86|x64
         Appx_Package_Build_Mode: StoreUpload
-        Configuration: ${{ matrix.configuration }}
+        Configuration: ${{ env.BUILD_CONFIGURATION }}
 
     - name: Remove the pfx
-      if: ${{ secrets.Base64_Encoded_Pfx != '' }}
-      run: Remove-Item -path $env:Wap_Project_Directory\GitHubActionsWorkflow.pfx
+      if: ${{ env.BASE64_ENCODED_PFX != '' }}
+      run: Remove-Item -Path (Join-Path $Env:WAP_PROJECT_DIRECTORY 'GitHubActionsWorkflow.pfx')
 
     - name: Upload build artifacts
       uses: actions/upload-artifact@v4
       with:
         name: MSIX Package
-        path: ${{ env:Wap_Project_Directory }}\AppPackages
+        # 使用表达式引用 env 的值，确保大括号在路径之前结束
+        path: ${{ env.WAP_PROJECT_DIRECTORY }}/AppPackages
