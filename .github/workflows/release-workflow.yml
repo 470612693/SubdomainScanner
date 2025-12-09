@@ -26,7 +26,7 @@ jobs:
     env:
       # 基本环境 / 请根据实际仓库调整这两个路径（或把它们改为仓库变量）
       Solution_Name: SubdomainScanner.sln
-      WAP_PROJECT_DIRECTORY: ${{ vars.Wap_Project_Directory || 'SubdomainScanner\\AppPackages' }}
+      WAP_PROJECT_DIRECTORY: ${{ vars.Wap_Project_Directory || 'SubdomainScanner' }}
       WAP_PROJECT_PATH: ${{ vars.Wap_Project_Path || 'SubdomainScanner\\SubdomainScanner.csproj' }}
       BASE64_ENCODED_PFX: ${{ secrets.Base64_Encoded_Pfx }}
       BUILD_CONFIGURATION: ${{ github.event.inputs.build_configuration || matrix.configuration }}
